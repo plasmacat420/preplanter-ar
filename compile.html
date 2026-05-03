@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Compile AR Target | PrePlanter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Palatino Linotype', Palatino, Georgia, serif;
+      background: #081a08; color: #52B788;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      min-height: 100vh; gap: 16px;
+    }
+    h1 { letter-spacing: 8px; font-weight: 300; font-size: 16px; color: #74C69D; }
+    .rule { width: 50px; height: 1px; background: linear-gradient(90deg,transparent,#2D6A4F,transparent); }
+    .sub  { font-size: 10px; letter-spacing: 4px; color: #2D6A4F; }
+    .btn  {
+      padding: 11px 30px; background: transparent;
+      border: 1px solid #2D6A4F; color: #52B788;
+      cursor: pointer; letter-spacing: 3px;
+      font-family: inherit; font-size: 11px;
+      transition: all 0.3s ease;
+    }
+    .btn:hover:not(:disabled) { background: #1B4332; border-color: #40916C; color: #74C69D; }
+    .btn:disabled { opacity: 0.3; cursor: default; }
+    #status { font-size: 12px; color: #40916C; letter-spacing: 1px; text-align: center; max-width: 320px; line-height: 1.8; min-height: 20px; }
+    #bar-wrap { width: 220px; height: 1px; background: #1B4332; display: none; }
+    #bar { height: 1px; width: 0%; background: #52B788; transition: width 0.15s linear; }
+    #preview { max-width: 120px; max-height: 120px; display: none; border: 1px solid #1B4332; }
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+
+  <h1>AR TARGET COMPILER</h1>
+  <div class="rule"></div>
+  <div class="sub">COMPILE LOGO BEFORE LAUNCHING AR</div>
+
+  <img id="preview" alt="">
+  <input type="file" id="fileInput" accept="image/*">
+  <button class="btn" id="selectBtn">SELECT LOGO IMAGE</button>
+  <button class="btn" id="compileBtn" disabled>COMPILE TARGET</button>
+  <div id="bar-wrap"><div id="bar"></div></div>
+  <div id="status">Loading compiler…</div>
+
+<script type="module">
+  // Import Compiler from the ES module bundle
+  let Compiler;
+  const status  = document.getElementById('status');
+  const bar     = document.getElementById('bar');
+  const barWrap = document.getElementById('bar-wrap');
+
+  try {
+    const mod = await import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js');
+    // The export may be named Compiler or live on a default/namespace object
+    Compiler = mod.Compiler
+      ?? mod.default?.Compiler
+      ?? mod.MINDAR?.IMAGE?.Compiler;
+
+    if (!Compiler) throw new Error('Compiler class not found in bundle. Exports: ' + Object.keys(mod).join(', '));
+
+    status.textContent = 'Select the PrePlanter logo PNG to begin.';
+  } catch (err) {
+    status.textContent = '⚠ ' + err.message;
+    console.error(err);
+  }
+
+  // ── File select ────────────────────────────────────────────────────────────
+  let selectedImg = null;
+
+  document.getElementById('selectBtn').addEventListener('click', () => {
+    document.getElementById('fileInput').click();
+  });
+
+  document.getElementById('fileInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      selectedImg = img;
+      const preview = document.getElementById('preview');
+      preview.src = url;
+      preview.style.display = 'block';
+      status.textContent = `Ready — ${file.name} (${img.width}×${img.height})`;
+      document.getElementById('compileBtn').disabled = !Compiler;
+    };
+    img.onerror = () => { status.textContent = '⚠ Could not load image.'; };
+    img.src = url;
+  });
+
+  // ── Compile ────────────────────────────────────────────────────────────────
+  document.getElementById('compileBtn').addEventListener('click', async () => {
+    if (!selectedImg || !Compiler) return;
+
+    document.getElementById('compileBtn').disabled = true;
+    document.getElementById('selectBtn').disabled  = true;
+    barWrap.style.display = 'block';
+
+    try {
+      const compiler = new Compiler();
+
+      await compiler.compileImageTargets([selectedImg], p => {
+        const pct = Math.round(p * 100);
+        bar.style.width = pct + '%';
+        status.textContent = `Compiling — ${pct}%`;
+      });
+
+      status.textContent = 'Exporting…';
+      const buffer = await compiler.exportData();
+
+      const blob = new Blob([buffer]);
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url;
+      a.download = 'targets.mind';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      bar.style.width = '100%';
+      status.innerHTML =
+        '✓ <strong style="color:#74C69D">targets.mind downloaded!</strong><br>' +
+        'Move it into the <em>preplanter-ar</em> folder,<br>' +
+        'then open <a href="/" style="color:#52B788">localhost:3000</a> in Chrome.';
+
+    } catch (err) {
+      status.textContent = '⚠ ' + (err.message || err);
+      console.error(err);
+      document.getElementById('compileBtn').disabled = false;
+      document.getElementById('selectBtn').disabled  = false;
+    }
+  });
+</script>
+</body>
+</html>

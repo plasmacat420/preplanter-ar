@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>PrePlanter AR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; }
+
+    #splash {
+      position: fixed; inset: 0; z-index: 200;
+      background: #081a08;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 14px;
+      transition: opacity 1.4s ease;
+    }
+    #splash.fade { opacity: 0; pointer-events: none; }
+
+    .brand {
+      font-family: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+      color: #52B788; letter-spacing: 10px;
+      font-size: 19px; font-weight: 300; text-indent: 10px;
+    }
+    .rule {
+      width: 44px; height: 1px;
+      background: linear-gradient(90deg, transparent, #2D6A4F, transparent);
+    }
+    .tagline {
+      font-family: Georgia, serif; color: #40916C;
+      font-size: 10px; letter-spacing: 5px; text-indent: 5px;
+    }
+    .hint {
+      position: absolute; bottom: 52px;
+      font-family: Georgia, serif; color: #2D6A4F;
+      font-size: 10px; letter-spacing: 4px; text-indent: 4px;
+      animation: breathe 2.4s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%, 100% { opacity: 0.3; }
+      50%       { opacity: 1.0; }
+    }
+    .mindar-ui-overlay { display: none !important; }
+
+    #debug {
+      position: fixed; top: 12px; left: 12px;
+      z-index: 999; color: lime; font-size: 11px;
+      font-family: monospace; background: rgba(0,0,0,0.5);
+      padding: 6px 10px; border-radius: 4px;
+      pointer-events: none;
+    }
+    #scan-hint {
+      position: fixed;
+      bottom: 48px;
+      left: 0; right: 0;
+      z-index: 100;
+      text-align: center;
+      font-family: 'Palatino Linotype', Palatino, Georgia, serif;
+      font-size: 11px;
+      letter-spacing: 4px;
+      color: #74C69D;
+      text-shadow: 0 0 12px rgba(82,183,136,0.8);
+      animation: breathe 2.4s ease-in-out infinite;
+      pointer-events: none;
+      transition: opacity 0.8s ease;
+    }
+    #scan-hint.hidden { opacity: 0; }
+
+    #ar-container {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      overflow: hidden;
+    }
+    #ar-container video,
+    #ar-container canvas {
+      position: absolute !important;
+      top: 0 !important; left: 0 !important;
+      width: 100% !important; height: 100% !important;
+    }
+    #ar-container video { object-fit: cover !important; }
+  </style>
+</head>
+<body>
+
+<div id="ar-container"></div>
+
+<div id="debug">loading…</div>
+<div id="scan-hint">POINT AT THE PREPLANTER LOGO</div>
+
+<div id="splash">
+  <div class="brand">PREPLANTER</div>
+  <div class="rule"></div>
+  <div class="tagline">Experience Growth</div>
+  <div class="hint">POINT AT THE LOGO</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { MindARThree } from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
+
+// ── Easing ───────────────────────────────────────────────────────────────────
+const ease = {
+  outCubic:   t => 1 - Math.pow(1 - t, 3),
+  outQuart:   t => 1 - Math.pow(1 - t, 4),
+  outElastic: t => {
+    if (t <= 0) return 0; if (t >= 1) return 1;
+    return Math.pow(2, -10*t) * Math.sin((t*10 - 0.75) * 2.094) + 1;
+  },
+};
+const clamp = t => Math.max(0, Math.min(1, t));
+const prg   = (t, s, d) => clamp((t - s) / d);
+
+// ── Palette ──────────────────────────────────────────────────────────────────
+const P = {
+  trunkDeep: 0x1B4332, trunkMid: 0x2D6A4F,
+  branch:    0x40916C, leafA:    0x52B788,
+  leafB:     0x74C69D, glowRing: 0x95D5B2,
+  spark:     0xD8F3DC,
+};
+
+// ── MindAR ───────────────────────────────────────────────────────────────────
+const mindar = new MindARThree({
+  container: document.getElementById('ar-container'),
+  imageTargetSrc: './targets.mind',
+  uiLoading: 'no', uiScanning: 'no', uiError: 'no',
+  filterMinCF: 0.0001, filterBeta: 1,
+  warmupTolerance: 1, missTolerance: 10,
+});
+const { renderer, scene, camera } = mindar;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+// ── Lights ───────────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const sun = new THREE.DirectionalLight(0xE8F5E9, 1.1);
+sun.position.set(0.5, 3, 3);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xC8E6C9, 0.45);
+fill.position.set(-2, 1, 1);
+scene.add(fill);
+
+// ── Anchor ───────────────────────────────────────────────────────────────────
+const anchor = mindar.addAnchor(0);
+const root   = anchor.group;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function mkTube(pts, radius, color) {
+  const curve = new THREE.CatmullRomCurve3(pts.map(([x,y,z]) => new THREE.Vector3(x,y,z)));
+  const geo   = new THREE.TubeGeometry(curve, 50, radius, 6, false);
+  const mat   = new THREE.MeshPhongMaterial({ color, shininess: 18, side: THREE.DoubleSide });
+  const mesh  = new THREE.Mesh(geo, mat);
+  root.add(mesh);
+  const total = geo.index.count;
+  geo.setDrawRange(0, 0);
+  return p => geo.setDrawRange(0, Math.floor(ease.outCubic(clamp(p)) * total));
+}
+
+function mkLeaf(pos, rotZ, sz, color) {
+  const geo = new THREE.PlaneGeometry(0.052, 0.088);
+  const mat = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0 });
+  const m   = new THREE.Mesh(geo, mat);
+  m.position.set(...pos);
+  m.rotation.z = rotZ;
+  m.scale.setScalar(0);
+  root.add(m);
+  return {
+    bloom(p) {
+      m.scale.setScalar(sz * ease.outElastic(clamp(p)));
+      mat.opacity = clamp(p * 5) * 0.92;
+    },
+    sway(t, ph) { m.rotation.z = rotZ + Math.sin(t*0.85 + ph) * 0.07; },
+  };
+}
+
+// ── Branches ─────────────────────────────────────────────────────────────────
+const branches = [
+  { fn: mkTube([[-0.34,-0.50,0.01],[-0.31,-0.04,0.02],[-0.27,0.36,0.02],[-0.20,0.73,0.01],[-0.14,1.02,0.00]], 0.020, P.trunkDeep), s:0.3, d:2.0 },
+  { fn: mkTube([[-0.31,0.02,0.02],[-0.46,0.24,0.02],[-0.60,0.43,0.01],[-0.66,0.56,0.00]], 0.012, P.trunkMid), s:1.3, d:1.0 },
+  { fn: mkTube([[-0.28,0.30,0.02],[-0.12,0.52,0.02],[0.02,0.65,0.01],[0.11,0.74,0.00]], 0.012, P.trunkMid), s:1.6, d:1.0 },
+  { fn: mkTube([[-0.23,0.57,0.02],[-0.36,0.80,0.02],[-0.44,0.94,0.01]], 0.007, P.branch), s:2.1, d:0.8 },
+  { fn: mkTube([[-0.18,0.73,0.02],[-0.06,0.91,0.02],[0.01,1.04,0.01]], 0.007, P.branch), s:2.3, d:0.7 },
+  { fn: mkTube([[0.15,-0.34,0.01],[0.32,-0.22,0.02],[0.47,-0.10,0.02],[0.56,0.07,0.01]], 0.011, P.trunkMid), s:0.7, d:1.3 },
+  { fn: mkTube([[0.54,0.03,0.02],[0.58,0.21,0.02],[0.54,0.39,0.01],[0.49,0.51,0.00]], 0.007, P.branch), s:2.0, d:0.8 },
+];
+
+// ── Leaves ───────────────────────────────────────────────────────────────────
+const leafDefs = [
+  {pos:[-0.37,-0.10,0.04],rot:-0.90,sz:1.00,col:P.leafA},
+  {pos:[-0.29, 0.07,0.04],rot: 0.70,sz:0.92,col:P.leafB},
+  {pos:[-0.33, 0.20,0.04],rot:-0.60,sz:1.10,col:P.leafA},
+  {pos:[-0.28, 0.34,0.04],rot: 0.80,sz:0.92,col:P.leafB},
+  {pos:[-0.25, 0.48,0.04],rot:-0.50,sz:1.00,col:P.leafA},
+  {pos:[-0.20, 0.63,0.04],rot: 0.60,sz:0.86,col:P.leafB},
+  {pos:[-0.46, 0.22,0.04],rot: 1.30,sz:0.80,col:P.leafA},
+  {pos:[-0.58, 0.40,0.04],rot: 1.00,sz:0.70,col:P.leafB},
+  {pos:[-0.64, 0.52,0.04],rot: 1.40,sz:0.62,col:P.leafA},
+  {pos:[-0.12, 0.51,0.04],rot:-0.70,sz:0.78,col:P.leafB},
+  {pos:[ 0.01, 0.63,0.04],rot:-0.40,sz:0.72,col:P.leafA},
+  {pos:[ 0.10, 0.73,0.04],rot: 0.50,sz:0.65,col:P.leafB},
+  {pos:[-0.37, 0.82,0.04],rot: 1.10,sz:0.60,col:P.leafA},
+  {pos:[-0.44, 0.95,0.04],rot: 1.40,sz:0.52,col:P.leafB},
+  {pos:[-0.05, 0.92,0.04],rot:-0.60,sz:0.58,col:P.leafB},
+  {pos:[ 0.01, 1.04,0.04],rot:-0.30,sz:0.50,col:P.leafA},
+  {pos:[ 0.33,-0.20,0.04],rot:-0.90,sz:0.72,col:P.leafA},
+  {pos:[ 0.47,-0.08,0.04],rot:-0.60,sz:0.66,col:P.leafB},
+  {pos:[ 0.56, 0.09,0.04],rot: 0.70,sz:0.60,col:P.leafA},
+  {pos:[ 0.55, 0.25,0.04],rot: 1.00,sz:0.55,col:P.leafB},
+  {pos:[ 0.51, 0.41,0.04],rot: 1.20,sz:0.50,col:P.leafA},
+  {pos:[ 0.47, 0.53,0.04],rot: 1.30,sz:0.44,col:P.leafB},
+];
+
+const LEAF_S = 2.6, LEAF_STAG = 0.10, LEAF_D = 0.65;
+const leafObjs = leafDefs.map((d, i) => ({
+  obj: mkLeaf(d.pos, d.rot, d.sz, d.col),
+  s: LEAF_S + i * LEAF_STAG,
+  ph: i * 0.63,
+}));
+
+// ── Particles ─────────────────────────────────────────────────────────────────
+const N    = 80;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(N * 3);
+const pSpd = Array.from({length:N}, () => 0.050 + Math.random()*0.065);
+const pPhs = Array.from({length:N}, () => Math.random()*Math.PI*2);
+const pX0  = Array.from({length:N}, () => (Math.random()-0.5)*1.3);
+
+for (let i = 0; i < N; i++) {
+  pPos[i*3]   = pX0[i];
+  pPos[i*3+1] = Math.random()*1.9 - 0.6;
+  pPos[i*3+2] = Math.random()*0.04;
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const pMat = new THREE.PointsMaterial({ color: P.spark, size: 0.015, transparent: true, opacity: 0, sizeAttenuation: true });
+root.add(new THREE.Points(pGeo, pMat));
+
+// ── Glow Ring ─────────────────────────────────────────────────────────────────
+const ringMat = new THREE.MeshBasicMaterial({ color: P.glowRing, transparent: true, opacity: 0, side: THREE.DoubleSide });
+const ring    = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.49, 80), ringMat);
+ring.position.z = 0.005;
+root.add(ring);
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let t0 = null;
+
+function reset() {
+  t0 = null;
+  branches.forEach(({fn}) => fn(0));
+  leafObjs.forEach(({obj}) => obj.bloom(0));
+  pMat.opacity  = 0;
+  ringMat.opacity = 0;
+  ring.scale.setScalar(1);
+}
+
+anchor.onTargetFound = () => {
+  document.getElementById('debug').textContent = 'TARGET FOUND ✓';
+  document.getElementById('scan-hint').classList.add('hidden');
+  reset();
+};
+anchor.onTargetLost = () => {
+  document.getElementById('debug').textContent = 'target lost';
+  document.getElementById('scan-hint').classList.remove('hidden');
+};
+
+// ── Render Loop ───────────────────────────────────────────────────────────────
+renderer.setAnimationLoop(ts => {
+  if (anchor.group.visible) {
+    if (!t0) t0 = ts;
+    const t = (ts - t0) * 0.001;
+
+    // Glow ring
+    const rp = prg(t, 0, 2.2);
+    ring.scale.setScalar(1 + ease.outQuart(rp)*0.28);
+    ringMat.opacity = rp < 0.35 ? (rp/0.35)*0.55 : (1-(rp-0.35)/0.65)*0.55;
+
+    // Branches
+    branches.forEach(({fn,s,d}) => fn(prg(t,s,d)));
+
+    // Leaves
+    leafObjs.forEach(({obj,s,ph}) => {
+      const p = prg(t, s, LEAF_D);
+      obj.bloom(p);
+      if (p >= 1) obj.sway(t, ph);
+    });
+
+    // Particles
+    const pp = prg(t, 4.0, 1.6);
+    pMat.opacity = ease.outCubic(pp) * 0.60;
+    if (pp > 0) {
+      const pa = pGeo.attributes.position;
+      for (let i = 0; i < N; i++) {
+        pa.array[i*3+1] += pSpd[i]*0.016;
+        pa.array[i*3]   += Math.sin(ts*0.0007 + pPhs[i])*0.0012;
+        if (pa.array[i*3+1] > 1.35) {
+          pa.array[i*3+1] = -0.6;
+          pa.array[i*3]   = pX0[i] + (Math.random()-0.5)*0.08;
+        }
+      }
+      pa.needsUpdate = true;
+    }
+  }
+  renderer.render(scene, camera);
+});
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+document.getElementById('debug').textContent = 'starting…';
+await mindar.start();
+document.getElementById('debug').textContent = 'scanning — anchor visible: ' + anchor.group.visible;
+
+// Poll anchor state every 500ms for debug
+setInterval(() => {
+  const d = document.getElementById('debug');
+  if (d.textContent.startsWith('TARGET')) return;
+  d.textContent = 'scanning… visible=' + anchor.group.visible;
+}, 500);
+
+// Camera is live — fade splash to reveal the feed
+const splash = document.getElementById('splash');
+splash.classList.add('fade');
+setTimeout(() => splash.style.display = 'none', 1500);
+
+</script>
+</body>
+</html>
