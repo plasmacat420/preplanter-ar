@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>button_glass_01 — AR test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: monospace; color: #fff; }
+
+    #info {
+      position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      font-size: 13px; text-align: center; white-space: nowrap;
+      background: rgba(0,0,0,0.55); padding: 6px 16px; border-radius: 20px;
+      pointer-events: none; z-index: 10;
+    }
+
+    /* Override ARButton style so it sits above the canvas */
+    #ARButton {
+      position: fixed !important;
+      bottom: 28px !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      z-index: 10 !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Loading GLB…</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three":          "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+  import * as THREE            from 'three';
+  import { GLTFLoader }        from 'three/addons/loaders/GLTFLoader.js';
+  import { ARButton }          from 'three/addons/webxr/ARButton.js';
+
+  const info  = document.getElementById('info');
+  const clock = new THREE.Clock();
+
+  // ── Renderer ───────────────────────────────────────────────────────────────
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.xr.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  // ── Scene / Camera ─────────────────────────────────────────────────────────
+  const scene  = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+
+  // Minimal ambient so the button relies on its own emissive for presence
+  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+  // ── Surface reticle ────────────────────────────────────────────────────────
+  const reticle = new THREE.Mesh(
+    Object.assign(
+      new THREE.RingGeometry(0.012, 0.018, 28),
+      { applyMatrix4: (m => { new THREE.RingGeometry(0.012,0.018,28).applyMatrix4(m); }) }
+    ),
+    new THREE.MeshBasicMaterial({ color: 0x44aaff, side: THREE.DoubleSide })
+  );
+  // Lay flat on detected surface
+  reticle.geometry.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
+  scene.add(reticle);
+
+  // ── Load GLB ───────────────────────────────────────────────────────────────
+  let mixer    = null;
+  let button3d = null;
+  let placed   = false;
+
+  new GLTFLoader().load('./button_glass_01.glb', gltf => {
+    button3d = gltf.scene;
+
+    // ── Transparency fix ───────────────────────────────────────────────────
+    // Three.js sorts transparent objects by depth, but within a single mesh
+    // the per-primitive order can be wrong.  Fix:
+    //   depthWrite = false   — don't write to z-buffer (prevents self-occlusion
+    //                          between the three transparent primitives)
+    //   renderOrder          — backplate draws first, rim second, face last
+    //                          so each layer composites correctly over the one below
+    const ORDER = { glass_back: 1, glass_rim: 2, glass_face: 3 };
+    button3d.traverse(child => {
+      if (!child.isMesh) return;
+      child.material.depthWrite = false;
+      child.renderOrder         = ORDER[child.material.name] ?? 2;
+    });
+
+    // ── Start idle_float ───────────────────────────────────────────────────
+    if (gltf.animations.length) {
+      mixer = new THREE.AnimationMixer(button3d);
+      const action = mixer.clipAction(gltf.animations[0]); // idle_float
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.play();
+    }
+
+    info.textContent = 'Tap "Start AR" → point at a flat surface → tap to place';
+  },
+  undefined,
+  err => { info.textContent = 'Load error — see console'; console.error(err); });
+
+  // ── AR button ──────────────────────────────────────────────────────────────
+  document.body.appendChild(
+    ARButton.createButton(renderer, {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body },
+    })
+  );
+
+  // ── WebXR hit-test plumbing ────────────────────────────────────────────────
+  let hitTestSource          = null;
+  let hitTestSourceRequested = false;
+
+  renderer.xr.addEventListener('sessionstart', () => {
+    placed = false;
+    info.textContent = 'Point at a flat surface → tap to place';
+  });
+  renderer.xr.addEventListener('sessionend', () => {
+    hitTestSource          = null;
+    hitTestSourceRequested = false;
+    placed = false;
+    info.textContent = 'AR session ended';
+  });
+
+  // Single tap → place
+  renderer.domElement.addEventListener('click', () => {
+    if (!button3d || !reticle.visible || placed) return;
+    button3d.position.setFromMatrixPosition(reticle.matrix);
+    button3d.quaternion.setFromRotationMatrix(reticle.matrix);
+    scene.add(button3d);
+    placed = true;
+    reticle.visible = false;
+    info.textContent = 'Placed — observe: transparency · rim · float · depth';
+  });
+
+  // ── Render loop ────────────────────────────────────────────────────────────
+  renderer.setAnimationLoop((_, frame) => {
+    const dt = clock.getDelta();
+    if (mixer) mixer.update(dt);
+
+    if (frame) {
+      const refSpace = renderer.xr.getReferenceSpace();
+      const session  = renderer.xr.getSession();
+
+      if (!hitTestSourceRequested) {
+        session.requestReferenceSpace('viewer').then(vs =>
+          session.requestHitTestSource({ space: vs }).then(src => {
+            hitTestSource = src;
+          })
+        );
+        hitTestSourceRequested = true;
+      }
+
+      if (hitTestSource && !placed) {
+        const hits = frame.getHitTestResults(hitTestSource);
+        if (hits.length) {
+          reticle.visible = true;
+          reticle.matrix.fromArray(hits[0].getPose(refSpace).transform.matrix);
+        } else {
+          reticle.visible = false;
+        }
+      }
+    }
+
+    renderer.render(scene, camera);
+  });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+  </script>
+</body>
+</html>
