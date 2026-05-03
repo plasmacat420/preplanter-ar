@@ -1,14 +1,29 @@
 {
   "name": "preplanter-ar",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Immersive AR experience that brings the PrePlanter brand to life. Point at the logo and watch a 3D plant grow with animated branches, leaves, and particles.",
+  "main": "index.html",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "serve"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "ar",
+    "augmented-reality",
+    "mindar",
+    "three.js",
+    "webgl",
+    "3d",
+    "animation",
+    "preplanter"
+  ],
+  "author": "plasmacat420",
   "license": "ISC",
-  "description": "",
+  "homepage": "https://plasmacat420.github.io/preplanter-ar/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plasmacat420/preplanter-ar.git"
+  },
   "devDependencies": {
     "serve": "^14.2.6"
   }
