@@ -95,6 +95,21 @@
       child.renderOrder         = ORDER[child.material.name] ?? 2;
     });
 
+    // ── Scale: 8cm spec → AR-readable size (~14cm effective) ─────────────────
+    button3d.scale.setScalar(1.75);
+
+    // ── Blob shadow: grounding plane at surface level ──────────────────────
+    const shadowMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.16, 0.09),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false,
+      })
+    );
+    shadowMesh.rotation.x = -Math.PI / 2;
+    shadowMesh.position.y = 0.001;       // 1mm above surface to avoid z-fight
+    shadowMesh.renderOrder = 0;
+    button3d.add(shadowMesh);
+
     // ── Start idle_float ───────────────────────────────────────────────────
     if (gltf.animations.length) {
       mixer = new THREE.AnimationMixer(button3d);
@@ -133,14 +148,17 @@
   });
 
   // Single tap → place
+  const FLOAT_OFFSET = 0.028; // 2.8cm above detected surface
   renderer.domElement.addEventListener('click', () => {
     if (!button3d || !reticle.visible || placed) return;
     button3d.position.setFromMatrixPosition(reticle.matrix);
     button3d.quaternion.setFromRotationMatrix(reticle.matrix);
+    // Lift above surface so it reads as floating, not resting
+    button3d.position.y += FLOAT_OFFSET;
     scene.add(button3d);
     placed = true;
     reticle.visible = false;
-    info.textContent = 'Placed — observe: transparency · rim · float · depth';
+    info.textContent = 'Placed — observe: size · depth · float · rim';
   });
 
   // ── Render loop ────────────────────────────────────────────────────────────
