@@ -95,12 +95,9 @@
       child.renderOrder         = ORDER[child.material.name] ?? 2;
     });
 
-    // ── Scale: 8cm spec → AR-readable size (~14cm effective) ─────────────────
-    button3d.scale.setScalar(1.75);
-
     // ── Blob shadow: grounding plane at surface level ──────────────────────
     const shadowMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.16, 0.09),
+      new THREE.PlaneGeometry(0.145, 0.075),
       new THREE.MeshBasicMaterial({
         color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false,
       })
