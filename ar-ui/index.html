@@ -15,7 +15,6 @@
       pointer-events: none; z-index: 10;
     }
 
-    /* Override ARButton style so it sits above the canvas */
     #ARButton {
       position: fixed !important;
       bottom: 28px !important;
@@ -31,16 +30,16 @@
   <script type="importmap">
   {
     "imports": {
-      "three":          "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-      "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      "three":         "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
     }
   }
   </script>
 
   <script type="module">
-  import * as THREE            from 'three';
-  import { GLTFLoader }        from 'three/addons/loaders/GLTFLoader.js';
-  import { ARButton }          from 'three/addons/webxr/ARButton.js';
+  import * as THREE       from 'three';
+  import { GLTFLoader }   from 'three/addons/loaders/GLTFLoader.js';
+  import { ARButton }     from 'three/addons/webxr/ARButton.js';
 
   const info  = document.getElementById('info');
   const clock = new THREE.Clock();
@@ -52,42 +51,23 @@
   renderer.xr.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  // ── Scene / Camera ─────────────────────────────────────────────────────────
+  // ── Scene ──────────────────────────────────────────────────────────────────
   const scene  = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
-
-  // Minimal ambient so the button relies on its own emissive for presence
   scene.add(new THREE.AmbientLight(0xffffff, 0.35));
 
-  // ── Surface reticle ────────────────────────────────────────────────────────
-  const reticle = new THREE.Mesh(
-    Object.assign(
-      new THREE.RingGeometry(0.012, 0.018, 28),
-      { applyMatrix4: (m => { new THREE.RingGeometry(0.012,0.018,28).applyMatrix4(m); }) }
-    ),
-    new THREE.MeshBasicMaterial({ color: 0x44aaff, side: THREE.DoubleSide })
-  );
-  // Lay flat on detected surface
-  reticle.geometry.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
-  reticle.matrixAutoUpdate = false;
-  reticle.visible = false;
-  scene.add(reticle);
+  // ── Placement constants ────────────────────────────────────────────────────
+  const PLACE_DISTANCE = 0.55;  // metres in front of camera
+  const PLACE_DROP     = 0.08;  // metres below camera eye-level
 
   // ── Load GLB ───────────────────────────────────────────────────────────────
   let mixer    = null;
   let button3d = null;
-  let placed   = false;
 
   new GLTFLoader().load('./button_glass_01.glb', gltf => {
     button3d = gltf.scene;
 
-    // ── Transparency fix ───────────────────────────────────────────────────
-    // Three.js sorts transparent objects by depth, but within a single mesh
-    // the per-primitive order can be wrong.  Fix:
-    //   depthWrite = false   — don't write to z-buffer (prevents self-occlusion
-    //                          between the three transparent primitives)
-    //   renderOrder          — backplate draws first, rim second, face last
-    //                          so each layer composites correctly over the one below
+    // Fix transparent draw order
     const ORDER = { glass_back: 1, glass_rim: 2, glass_face: 3 };
     button3d.traverse(child => {
       if (!child.isMesh) return;
@@ -95,98 +75,72 @@
       child.renderOrder         = ORDER[child.material.name] ?? 2;
     });
 
-    // ── Blob shadow: grounding plane at surface level ──────────────────────
-    const shadowMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.145, 0.075),
-      new THREE.MeshBasicMaterial({
-        color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false,
-      })
-    );
-    shadowMesh.rotation.x = -Math.PI / 2;
-    shadowMesh.position.y = 0.001;       // 1mm above surface to avoid z-fight
-    shadowMesh.renderOrder = 0;
-    button3d.add(shadowMesh);
-
-    // ── Start idle_float ───────────────────────────────────────────────────
+    // Start idle_float animation
     if (gltf.animations.length) {
       mixer = new THREE.AnimationMixer(button3d);
-      const action = mixer.clipAction(gltf.animations[0]); // idle_float
+      const action = mixer.clipAction(gltf.animations[0]);
       action.setLoop(THREE.LoopRepeat, Infinity);
       action.play();
     }
 
-    info.textContent = 'Tap "Start AR" → point at a flat surface → tap to place';
+    info.textContent = 'Tap "Start AR" → tap anywhere to place';
   },
   undefined,
   err => { info.textContent = 'Load error — see console'; console.error(err); });
 
-  // ── AR button ──────────────────────────────────────────────────────────────
+  // ── AR button — no hit-test required ──────────────────────────────────────
   document.body.appendChild(
     ARButton.createButton(renderer, {
-      requiredFeatures: ['hit-test'],
       optionalFeatures: ['dom-overlay'],
       domOverlay: { root: document.body },
     })
   );
 
-  // ── WebXR hit-test plumbing ────────────────────────────────────────────────
-  let hitTestSource          = null;
-  let hitTestSourceRequested = false;
-
   renderer.xr.addEventListener('sessionstart', () => {
-    placed = false;
-    info.textContent = 'Point at a flat surface → tap to place';
+    info.textContent = 'Tap to place';
   });
   renderer.xr.addEventListener('sessionend', () => {
-    hitTestSource          = null;
-    hitTestSourceRequested = false;
-    placed = false;
     info.textContent = 'AR session ended';
   });
 
-  // Single tap → place
-  const FLOAT_OFFSET = 0.028; // 2.8cm above detected surface
+  // ── Camera-relative placement ──────────────────────────────────────────────
+  // Reusable vectors — allocated once to avoid GC pressure
+  const _camPos  = new THREE.Vector3();
+  const _forward = new THREE.Vector3();
+
+  function placeAtCamera() {
+    if (!button3d) return;
+
+    const xrCam = renderer.xr.getCamera();
+    xrCam.getWorldPosition(_camPos);
+    xrCam.getWorldDirection(_forward);
+
+    // Flatten to horizontal so the button doesn't tilt with head pitch
+    _forward.y = 0;
+    _forward.normalize();
+
+    button3d.position.set(
+      _camPos.x + _forward.x * PLACE_DISTANCE,
+      _camPos.y - PLACE_DROP,
+      _camPos.z + _forward.z * PLACE_DISTANCE
+    );
+
+    // Rotate to face the camera around the Y axis only (stays upright)
+    button3d.lookAt(_camPos.x, button3d.position.y, _camPos.z);
+
+    if (!button3d.parent) scene.add(button3d);
+
+    info.textContent = 'Tap to reposition';
+  }
+
   renderer.domElement.addEventListener('click', () => {
-    if (!button3d || !reticle.visible || placed) return;
-    button3d.position.setFromMatrixPosition(reticle.matrix);
-    button3d.quaternion.setFromRotationMatrix(reticle.matrix);
-    // Lift above surface so it reads as floating, not resting
-    button3d.position.y += FLOAT_OFFSET;
-    scene.add(button3d);
-    placed = true;
-    reticle.visible = false;
-    info.textContent = 'Placed — observe: size · depth · float · rim';
+    if (!renderer.xr.isPresenting) return;
+    placeAtCamera();
   });
 
   // ── Render loop ────────────────────────────────────────────────────────────
-  renderer.setAnimationLoop((_, frame) => {
-    const dt = clock.getDelta();
-    if (mixer) mixer.update(dt);
-
-    if (frame) {
-      const refSpace = renderer.xr.getReferenceSpace();
-      const session  = renderer.xr.getSession();
-
-      if (!hitTestSourceRequested) {
-        session.requestReferenceSpace('viewer').then(vs =>
-          session.requestHitTestSource({ space: vs }).then(src => {
-            hitTestSource = src;
-          })
-        );
-        hitTestSourceRequested = true;
-      }
-
-      if (hitTestSource && !placed) {
-        const hits = frame.getHitTestResults(hitTestSource);
-        if (hits.length) {
-          reticle.visible = true;
-          reticle.matrix.fromArray(hits[0].getPose(refSpace).transform.matrix);
-        } else {
-          reticle.visible = false;
-        }
-      }
-    }
-
+  renderer.setAnimationLoop((_, _frame) => {
+    if (mixer) mixer.update(clock.getDelta());
     renderer.render(scene, camera);
   });
 
