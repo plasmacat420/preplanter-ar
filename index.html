@@ -165,8 +165,19 @@ function mkTube(pts, radius, color) {
   return p => geo.setDrawRange(0, Math.floor(ease.outCubic(clamp(p)) * total));
 }
 
+const _leafGeoCache = {};
+function getLeafGeo(w, h) {
+  const key = `${w}_${h}`;
+  if (_leafGeoCache[key]) return _leafGeoCache[key];
+  const shape = new THREE.Shape();
+  shape.moveTo(0, h / 2);
+  shape.bezierCurveTo( w * 0.62,  h * 0.30,  w * 0.62, -h * 0.18, 0, -h / 2);
+  shape.bezierCurveTo(-w * 0.62, -h * 0.18, -w * 0.62,  h * 0.30, 0,  h / 2);
+  return (_leafGeoCache[key] = new THREE.ShapeGeometry(shape, 10));
+}
+
 function mkLeaf(pos, rotZ, sz, color) {
-  const geo = new THREE.PlaneGeometry(0.052, 0.088);
+  const geo = getLeafGeo(0.13, 0.22);
   const mat = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0 });
   const m   = new THREE.Mesh(geo, mat);
   m.position.set(...pos);
@@ -176,9 +187,9 @@ function mkLeaf(pos, rotZ, sz, color) {
   return {
     bloom(p) {
       m.scale.setScalar(sz * ease.outElastic(clamp(p)));
-      mat.opacity = clamp(p * 5) * 0.92;
+      mat.opacity = clamp(p * 4) * 0.90;
     },
-    sway(t, ph) { m.rotation.z = rotZ + Math.sin(t*0.85 + ph) * 0.07; },
+    sway(t, ph) { m.rotation.z = rotZ + Math.sin(t * 0.85 + ph) * 0.07; },
   };
 }
 
@@ -195,28 +206,51 @@ const branches = [
 
 // ── Leaves ───────────────────────────────────────────────────────────────────
 const leafDefs = [
-  {pos:[-0.37,-0.10,0.04],rot:-0.90,sz:1.00,col:P.leafA},
-  {pos:[-0.29, 0.07,0.04],rot: 0.70,sz:0.92,col:P.leafB},
+  // ── main trunk ──
+  {pos:[-0.37,-0.10,0.04],rot:-0.90,sz:1.05,col:P.leafA},
+  {pos:[-0.26,-0.08,0.04],rot: 0.85,sz:0.98,col:P.leafB},
+  {pos:[-0.29, 0.07,0.04],rot: 0.70,sz:1.00,col:P.leafB},
+  {pos:[-0.41, 0.09,0.04],rot:-1.05,sz:0.95,col:P.leafA},
   {pos:[-0.33, 0.20,0.04],rot:-0.60,sz:1.10,col:P.leafA},
-  {pos:[-0.28, 0.34,0.04],rot: 0.80,sz:0.92,col:P.leafB},
+  {pos:[-0.22, 0.22,0.04],rot: 0.75,sz:1.02,col:P.leafB},
+  {pos:[-0.28, 0.34,0.04],rot: 0.80,sz:0.98,col:P.leafB},
+  {pos:[-0.40, 0.33,0.04],rot:-0.70,sz:0.92,col:P.leafA},
   {pos:[-0.25, 0.48,0.04],rot:-0.50,sz:1.00,col:P.leafA},
-  {pos:[-0.20, 0.63,0.04],rot: 0.60,sz:0.86,col:P.leafB},
-  {pos:[-0.46, 0.22,0.04],rot: 1.30,sz:0.80,col:P.leafA},
+  {pos:[-0.15, 0.46,0.04],rot: 0.65,sz:0.90,col:P.leafB},
+  {pos:[-0.20, 0.63,0.04],rot: 0.60,sz:0.88,col:P.leafB},
+  {pos:[-0.30, 0.62,0.04],rot:-0.55,sz:0.84,col:P.leafA},
+  // ── upper trunk / crown ──
+  {pos:[-0.17, 0.77,0.04],rot:-0.40,sz:0.80,col:P.leafA},
+  {pos:[-0.10, 0.90,0.04],rot: 0.55,sz:0.72,col:P.leafB},
+  {pos:[-0.18, 1.00,0.04],rot:-0.65,sz:0.62,col:P.leafA},
+  {pos:[-0.08, 1.06,0.04],rot: 0.35,sz:0.55,col:P.leafB},
+  // ── left branch ──
+  {pos:[-0.46, 0.22,0.04],rot: 1.30,sz:0.82,col:P.leafA},
+  {pos:[-0.52, 0.32,0.04],rot:-1.60,sz:0.74,col:P.leafB},
   {pos:[-0.58, 0.40,0.04],rot: 1.00,sz:0.70,col:P.leafB},
   {pos:[-0.64, 0.52,0.04],rot: 1.40,sz:0.62,col:P.leafA},
-  {pos:[-0.12, 0.51,0.04],rot:-0.70,sz:0.78,col:P.leafB},
-  {pos:[ 0.01, 0.63,0.04],rot:-0.40,sz:0.72,col:P.leafA},
-  {pos:[ 0.10, 0.73,0.04],rot: 0.50,sz:0.65,col:P.leafB},
-  {pos:[-0.37, 0.82,0.04],rot: 1.10,sz:0.60,col:P.leafA},
-  {pos:[-0.44, 0.95,0.04],rot: 1.40,sz:0.52,col:P.leafB},
-  {pos:[-0.05, 0.92,0.04],rot:-0.60,sz:0.58,col:P.leafB},
-  {pos:[ 0.01, 1.04,0.04],rot:-0.30,sz:0.50,col:P.leafA},
-  {pos:[ 0.33,-0.20,0.04],rot:-0.90,sz:0.72,col:P.leafA},
-  {pos:[ 0.47,-0.08,0.04],rot:-0.60,sz:0.66,col:P.leafB},
-  {pos:[ 0.56, 0.09,0.04],rot: 0.70,sz:0.60,col:P.leafA},
-  {pos:[ 0.55, 0.25,0.04],rot: 1.00,sz:0.55,col:P.leafB},
-  {pos:[ 0.51, 0.41,0.04],rot: 1.20,sz:0.50,col:P.leafA},
-  {pos:[ 0.47, 0.53,0.04],rot: 1.30,sz:0.44,col:P.leafB},
+  {pos:[-0.58, 0.55,0.04],rot:-1.20,sz:0.56,col:P.leafB},
+  // ── right arch branch ──
+  {pos:[-0.12, 0.51,0.04],rot:-0.70,sz:0.80,col:P.leafB},
+  {pos:[-0.02, 0.56,0.04],rot: 0.55,sz:0.75,col:P.leafA},
+  {pos:[ 0.05, 0.66,0.04],rot:-0.40,sz:0.72,col:P.leafB},
+  {pos:[ 0.11, 0.76,0.04],rot: 0.50,sz:0.65,col:P.leafA},
+  // ── left upper tips ──
+  {pos:[-0.32, 0.80,0.04],rot: 1.10,sz:0.64,col:P.leafA},
+  {pos:[-0.40, 0.88,0.04],rot:-1.40,sz:0.58,col:P.leafB},
+  {pos:[-0.44, 0.97,0.04],rot: 1.45,sz:0.52,col:P.leafA},
+  {pos:[-0.50, 0.93,0.04],rot:-1.60,sz:0.46,col:P.leafB},
+  // ── right arm ──
+  {pos:[ 0.28,-0.26,0.04],rot:-1.00,sz:0.75,col:P.leafA},
+  {pos:[ 0.38,-0.16,0.04],rot:-0.70,sz:0.70,col:P.leafB},
+  {pos:[ 0.48,-0.06,0.04],rot:-0.55,sz:0.65,col:P.leafA},
+  {pos:[ 0.56, 0.08,0.04],rot: 0.70,sz:0.60,col:P.leafB},
+  // ── right tip cluster ──
+  {pos:[ 0.56, 0.22,0.04],rot: 1.00,sz:0.58,col:P.leafA},
+  {pos:[ 0.60, 0.22,0.04],rot:-1.30,sz:0.50,col:P.leafB},
+  {pos:[ 0.53, 0.38,0.04],rot: 1.20,sz:0.52,col:P.leafA},
+  {pos:[ 0.47, 0.50,0.04],rot: 1.35,sz:0.46,col:P.leafB},
+  {pos:[ 0.52, 0.50,0.04],rot:-1.50,sz:0.42,col:P.leafA},
 ];
 
 const LEAF_S = 2.6, LEAF_STAG = 0.10, LEAF_D = 0.65;
