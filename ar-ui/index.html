@@ -54,11 +54,28 @@
   // ── Scene ──────────────────────────────────────────────────────────────────
   const scene  = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+  // Hemisphere gives a top-to-bottom gradient that reads as depth on the backplate.
+  // Ground color is cool-dark to subtly differentiate bottom rim from face.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.40));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.15));
 
   // ── Placement constants ────────────────────────────────────────────────────
-  const PLACE_DISTANCE = 0.55;  // metres in front of camera
-  const PLACE_DROP     = 0.08;  // metres below camera eye-level
+  const PLACE_DISTANCE = 0.50;   // metres in front of camera
+  const PLACE_DROP     = 0.07;   // metres below camera eye-level
+
+  // ── Re-acquisition constants ───────────────────────────────────────────────
+  const TRIGGER_DEG    = 28;     // start dwell timer above this angle
+  const RESET_DEG      = 20;     // reset dwell timer below this angle (hysteresis)
+  const OCCLUDE_DEG    = 90;     // immediate re-acquire — UI is fully out of view
+  const DWELL_TIME     = 1.1;    // seconds outside TRIGGER_DEG before re-acquiring
+  const ANIM_DURATION  = 0.45;   // seconds for re-acquire animation
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let isPlaced    = false;
+  let isAnimating = false;
+  let dwellTimer  = 0;
+  let animProgress = 0;
 
   // ── Load GLB ───────────────────────────────────────────────────────────────
   let mixer    = null;
@@ -83,7 +100,7 @@
       action.play();
     }
 
-    info.textContent = 'Tap "Start AR" → tap anywhere to place';
+    info.textContent = 'Tap "Start AR" → tap to place';
   },
   undefined,
   err => { info.textContent = 'Load error — see console'; console.error(err); });
@@ -100,47 +117,129 @@
     info.textContent = 'Tap to place';
   });
   renderer.xr.addEventListener('sessionend', () => {
+    isPlaced = false;
+    isAnimating = false;
+    dwellTimer = 0;
     info.textContent = 'AR session ended';
   });
 
-  // ── Camera-relative placement ──────────────────────────────────────────────
-  // Reusable vectors — allocated once to avoid GC pressure
-  const _camPos  = new THREE.Vector3();
-  const _forward = new THREE.Vector3();
+  // ── Reusable allocation — avoid GC pressure in render loop ────────────────
+  const _camPos       = new THREE.Vector3();
+  const _forward      = new THREE.Vector3();
+  const _toButton     = new THREE.Vector3();
+  const _animStartPos = new THREE.Vector3();
+  const _animTargetPos = new THREE.Vector3();
+  const _animStartQuat = new THREE.Quaternion();
+  const _animTargetQuat = new THREE.Quaternion();
+  const _lookProxy    = new THREE.Object3D(); // scratch object for lookAt → quaternion
 
-  function placeAtCamera() {
-    if (!button3d) return;
-
-    const xrCam = renderer.xr.getCamera();
-    xrCam.getWorldPosition(_camPos);
-    xrCam.getWorldDirection(_forward);
-
-    // Flatten to horizontal so the button doesn't tilt with head pitch
+  // ── Placement helpers ──────────────────────────────────────────────────────
+  function getCameraForward() {
+    renderer.xr.getCamera().getWorldPosition(_camPos);
+    renderer.xr.getCamera().getWorldDirection(_forward);
     _forward.y = 0;
     _forward.normalize();
+  }
 
+  function computeComfortTarget() {
+    getCameraForward();
+    _animTargetPos.set(
+      _camPos.x + _forward.x * PLACE_DISTANCE,
+      _camPos.y - PLACE_DROP,
+      _camPos.z + _forward.z * PLACE_DISTANCE
+    );
+    _lookProxy.position.copy(_animTargetPos);
+    _lookProxy.lookAt(_camPos.x, _animTargetPos.y, _camPos.z);
+    _animTargetQuat.copy(_lookProxy.quaternion);
+  }
+
+  // Instant snap — first placement only
+  function placeAtCamera() {
+    if (!button3d) return;
+    getCameraForward();
     button3d.position.set(
       _camPos.x + _forward.x * PLACE_DISTANCE,
       _camPos.y - PLACE_DROP,
       _camPos.z + _forward.z * PLACE_DISTANCE
     );
-
-    // Rotate to face the camera around the Y axis only (stays upright)
     button3d.lookAt(_camPos.x, button3d.position.y, _camPos.z);
-
     if (!button3d.parent) scene.add(button3d);
-
-    info.textContent = 'Tap to reposition';
+    isPlaced    = true;
+    isAnimating = false;
+    dwellTimer  = 0;
+    info.textContent = 'Placed — tap to reposition';
   }
 
+  // Animated re-acquire — used for auto and manual reposition after first place
+  function startReacquire() {
+    computeComfortTarget();
+    _animStartPos.copy(button3d.position);
+    _animStartQuat.copy(button3d.quaternion);
+    animProgress = 0;
+    isAnimating  = true;
+    dwellTimer   = 0;
+  }
+
+  // ── Tap handler ────────────────────────────────────────────────────────────
   renderer.domElement.addEventListener('click', () => {
-    if (!renderer.xr.isPresenting) return;
-    placeAtCamera();
+    if (!renderer.xr.isPresenting || !button3d) return;
+    if (!isPlaced) {
+      placeAtCamera();           // first tap: instant snap
+    } else {
+      startReacquire();          // subsequent taps: smooth re-acquire
+      info.textContent = 'Repositioning…';
+    }
   });
 
   // ── Render loop ────────────────────────────────────────────────────────────
-  renderer.setAnimationLoop((_, _frame) => {
-    if (mixer) mixer.update(clock.getDelta());
+  renderer.setAnimationLoop(() => {
+    const delta = clock.getDelta();
+    if (mixer) mixer.update(delta);
+
+    if (isPlaced && renderer.xr.isPresenting) {
+      if (isAnimating) {
+        // Advance ease-out animation toward comfort target
+        animProgress += delta / ANIM_DURATION;
+        if (animProgress >= 1) {
+          animProgress = 1;
+          isAnimating  = false;
+          info.textContent = 'Placed — tap to reposition';
+        }
+        const t = 1 - (1 - animProgress) * (1 - animProgress); // ease-out
+        button3d.position.lerpVectors(_animStartPos, _animTargetPos, t);
+        button3d.quaternion.slerpQuaternions(_animStartQuat, _animTargetQuat, t);
+
+      } else {
+        // Check angle from camera forward to button
+        renderer.xr.getCamera().getWorldPosition(_camPos);
+        renderer.xr.getCamera().getWorldDirection(_forward);
+        _forward.y = 0;
+        _forward.normalize();
+
+        _toButton.copy(button3d.position).sub(_camPos);
+        _toButton.y = 0;
+        if (_toButton.lengthSq() > 0.0001) _toButton.normalize();
+
+        const dot   = THREE.MathUtils.clamp(_toButton.dot(_forward), -1, 1);
+        const angle = Math.acos(dot) * THREE.MathUtils.RAD2DEG;
+
+        if (angle > OCCLUDE_DEG) {
+          // UI is fully behind — re-acquire immediately, no dwell
+          startReacquire();
+          info.textContent = 'Re-acquiring…';
+        } else if (angle > TRIGGER_DEG) {
+          dwellTimer += delta;
+          if (dwellTimer >= DWELL_TIME) {
+            startReacquire();
+            info.textContent = 'Re-acquiring…';
+          }
+        } else if (angle < RESET_DEG) {
+          dwellTimer = 0; // hysteresis: only reset inside inner threshold
+        }
+        // Between RESET_DEG and TRIGGER_DEG: hold timer without change
+      }
+    }
+
     renderer.render(scene, camera);
   });
 
