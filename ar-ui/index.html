@@ -281,11 +281,16 @@
     const cam   = (xrCam.cameras && xrCam.cameras.length > 0) ? xrCam.cameras[0] : xrCam;
     _raycaster.setFromCamera(_pointer, cam);
 
-    if (_raycaster.intersectObject(button3d, true).length === 0) return; // missed
+    const hits = _raycaster.intersectObject(button3d, true);
 
-    tapping = true; tapT = 0;
-    startReacquire();
-    info.textContent = 'Repositioning…';
+    if (hits.length > 0) {
+      // Hit — press interaction only, no reposition
+      tapping = true; tapT = 0;
+    } else {
+      // Miss — treat as reposition
+      startReacquire();
+      info.textContent = 'Repositioning…';
+    }
   });
 
   // ── Render loop ────────────────────────────────────────────────────────────
