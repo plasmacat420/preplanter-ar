@@ -72,7 +72,9 @@
   const RIM_BASE        = 2.8;   // rim emissive base (matches GLB spec)
   const RIM_PULSE_AMP   = 0.30;  // ±amplitude of idle emissive variation
   const RIM_PULSE_HZ    = 0.40;  // Hz — ~2.5s period, desync from float animation
-  const RIM_PRESS_BOOST = 1.5;   // additive emissive boost at full press — stacks on idle pulse
+  const RIM_PRESS_BOOST  = 1.5;  // additive emissive boost at full press — stacks on idle pulse
+  const TARGET_ZONE_DEG  = 12;  // degrees from camera forward to count as "targeted"
+  const TARGET_BOOST     = 0.5; // rim emissive boost when button is in targeting zone
 
   // ── Re-acquisition constants ───────────────────────────────────────────────
   const TRIGGER_DEG    = 28;     // start dwell timer above this angle
@@ -86,15 +88,15 @@
   let isAnimating = false;
   let dwellTimer  = 0;
   let animProgress = 0;
-  let tapT        = 0;     // 0 = full size, 1 = fully pressed (TAP_SCALE)
-  let tapping     = false; // true during press phase
-  let debugFlash  = 0;     // countdown in seconds — turns button red to confirm tap receipt
+  let tapT           = 0;     // 0 = full size, 1 = fully pressed (TAP_SCALE)
+  let tapping        = false; // true during press phase
+  let targetingFactor = 0;   // 0 = not aimed at button, 1 = centered on button
 
   // ── Load GLB ───────────────────────────────────────────────────────────────
   let mixer    = null;
   let button3d = null;
-  let rimMat   = null;     // reference for per-frame emissive pulse
-  let faceMat  = null;     // reference for per-frame emissive restore after debug flash
+  let rimMat   = null;  // reference for per-frame emissive
+  let faceMat  = null;  // reference for per-frame emissive
 
   new GLTFLoader().load('./button_glass_01.glb', gltf => {
     button3d = gltf.scene;
@@ -249,8 +251,6 @@
   // ── Tap handler ────────────────────────────────────────────────────────────
   renderer.domElement.addEventListener('click', () => {
     if (!renderer.xr.isPresenting || !button3d) return;
-    console.log('[AR-UI] tap registered');
-    debugFlash = 0.3;
     if (!isPlaced) {
       placeAtCamera();           // first tap: instant snap
     } else {
@@ -293,7 +293,6 @@
         const angle = Math.acos(dot) * THREE.MathUtils.RAD2DEG;
 
         if (angle > OCCLUDE_DEG) {
-          // UI is fully behind — re-acquire immediately, no dwell
           startReacquire();
           info.textContent = 'Re-acquiring…';
         } else if (angle > TRIGGER_DEG) {
@@ -303,9 +302,16 @@
             info.textContent = 'Re-acquiring…';
           }
         } else if (angle < RESET_DEG) {
-          dwellTimer = 0; // hysteresis: only reset inside inner threshold
+          dwellTimer = 0;
         }
-        // Between RESET_DEG and TRIGGER_DEG: hold timer without change
+
+        // Targeting cue — smoothly track whether button is centered in view
+        const targetGoal = angle < TARGET_ZONE_DEG ? 1.0 : 0.0;
+        targetingFactor += (targetGoal - targetingFactor) * Math.min(delta * 8.0, 1.0);
+
+      } else {
+        // Fade targeting out while button is animating to new position
+        targetingFactor *= Math.max(0, 1 - delta * 6.0);
       }
     }
 
@@ -320,22 +326,15 @@
       button3d.scale.setScalar(1 - (1 - TAP_SCALE) * tapT);
     }
 
-    // ── Emissive: debug flash overrides normal pulse, self-restores ────────────
-    if (debugFlash > 0) {
-      debugFlash = Math.max(0, debugFlash - delta);
-      if (rimMat)  { rimMat.emissive.setRGB(1, 0, 0);  rimMat.emissiveIntensity  = 5.0; }
-      if (faceMat) { faceMat.emissive.setRGB(1, 0, 0); faceMat.emissiveIntensity = 3.0; }
-    } else {
-      if (rimMat) {
-        rimMat.emissive.setHex(0xffffff); // ensure restored after flash
-        rimMat.emissiveIntensity = RIM_BASE
-          + RIM_PULSE_AMP   * Math.sin(clock.elapsedTime * Math.PI * 2 * RIM_PULSE_HZ)
-          + RIM_PRESS_BOOST * tapT;
-      }
-      if (faceMat) {
-        faceMat.emissive.setHex(0x334466); // ensure restored after flash
-        faceMat.emissiveIntensity = 0.12;
-      }
+    // ── Emissive: idle pulse + targeting cue + press flare ─────────────────────
+    if (rimMat) {
+      rimMat.emissiveIntensity = RIM_BASE
+        + RIM_PULSE_AMP  * Math.sin(clock.elapsedTime * Math.PI * 2 * RIM_PULSE_HZ)
+        + TARGET_BOOST   * targetingFactor   // subtle brightening when aimed at button
+        + RIM_PRESS_BOOST * tapT;            // flare on press
+    }
+    if (faceMat) {
+      faceMat.emissiveIntensity = 0.12 + 0.10 * targetingFactor; // face brightens slightly when targeted
     }
 
     renderer.render(scene, camera);
