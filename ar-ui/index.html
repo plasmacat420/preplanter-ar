@@ -305,6 +305,7 @@
         const t = 1 - (1 - animProgress) * (1 - animProgress); // ease-out
         button3d.position.lerpVectors(_animStartPos, _animTargetPos, t);
         button3d.quaternion.slerpQuaternions(_animStartQuat, _animTargetQuat, t);
+        targetingFactor *= Math.max(0, 1 - delta * 6.0); // fade targeting while animating
 
       } else {
         // Check angle from camera forward to button
@@ -336,10 +337,6 @@
         // Targeting cue — smoothly track whether button is centered in view
         const targetGoal = angle < TARGET_ZONE_DEG ? 1.0 : 0.0;
         targetingFactor += (targetGoal - targetingFactor) * Math.min(delta * 8.0, 1.0);
-
-      } else {
-        // Fade targeting out while button is animating to new position
-        targetingFactor *= Math.max(0, 1 - delta * 6.0);
       }
     }
 
