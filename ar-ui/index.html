@@ -63,6 +63,7 @@
   // ── Placement constants ────────────────────────────────────────────────────
   const PLACE_DISTANCE = 0.50;   // metres in front of camera
   const PLACE_DROP     = 0.07;   // metres below camera eye-level
+  const FACE_TILT      = 15;     // degrees — face tilts this far from perfect billboard
 
   // ── Re-acquisition constants ───────────────────────────────────────────────
   const TRIGGER_DEG    = 28;     // start dwell timer above this angle
@@ -141,6 +142,19 @@
     _forward.normalize();
   }
 
+  // The glass face is the +Y axis in Three.js space (Blender +Z → GLTF +Y).
+  // lookAt aligns -Z toward the target, so we post-multiply a local-X rotation
+  // to bring +Y (the face) toward the camera, then back off by FACE_TILT degrees.
+  // R_x(-90° + FACE_TILT) = R_x(-75°) at the default 15° tilt.
+  const _faceCorrection = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 0, 0),
+    THREE.MathUtils.degToRad(-90 + FACE_TILT)
+  );
+  function setComfortRotation(obj, camPos) {
+    obj.lookAt(camPos.x, obj.position.y, camPos.z); // Y-axis billboard base
+    obj.quaternion.multiply(_faceCorrection);        // bring face toward camera + tilt
+  }
+
   function computeComfortTarget() {
     getCameraForward();
     _animTargetPos.set(
@@ -149,7 +163,7 @@
       _camPos.z + _forward.z * PLACE_DISTANCE
     );
     _lookProxy.position.copy(_animTargetPos);
-    _lookProxy.lookAt(_camPos.x, _animTargetPos.y, _camPos.z);
+    setComfortRotation(_lookProxy, _camPos);
     _animTargetQuat.copy(_lookProxy.quaternion);
   }
 
@@ -162,7 +176,7 @@
       _camPos.y - PLACE_DROP,
       _camPos.z + _forward.z * PLACE_DISTANCE
     );
-    button3d.lookAt(_camPos.x, button3d.position.y, _camPos.z);
+    setComfortRotation(button3d, _camPos);
     if (!button3d.parent) scene.add(button3d);
     isPlaced    = true;
     isAnimating = false;
