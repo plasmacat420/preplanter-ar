@@ -168,12 +168,23 @@
     info.textContent = 'Tap to place';
   });
   renderer.xr.addEventListener('sessionend', () => {
-    isPlaced = false;
-    isAnimating = false;
-    dwellTimer = 0;
-    tapping = false; tapT = 0;
-    if (button3d) button3d.scale.setScalar(1);
+    isPlaced        = false;
+    isAnimating     = false;
+    dwellTimer      = 0;
+    tapping         = false;
+    tapT            = 0;
+    targetingFactor = 0;
+    if (button3d) {
+      button3d.scale.setScalar(1);
+      if (button3d.parent) scene.remove(button3d); // clean removal so re-entry is fresh
+    }
     info.textContent = 'AR session ended';
+  });
+
+  // End XR session cleanly when page is hidden (back button, app switch, reload)
+  window.addEventListener('pagehide', () => {
+    const session = renderer.xr.getSession();
+    if (session) session.end();
   });
 
   // ── Reusable allocation — avoid GC pressure in render loop ────────────────
@@ -185,6 +196,8 @@
   const _animStartQuat = new THREE.Quaternion();
   const _animTargetQuat = new THREE.Quaternion();
   const _lookProxy    = new THREE.Object3D(); // scratch object for lookAt → quaternion
+  const _raycaster    = new THREE.Raycaster();
+  const _pointer      = new THREE.Vector2();
 
   // ── Placement helpers ──────────────────────────────────────────────────────
   function getCameraForward() {
@@ -249,15 +262,30 @@
   }
 
   // ── Tap handler ────────────────────────────────────────────────────────────
-  renderer.domElement.addEventListener('click', () => {
+  renderer.domElement.addEventListener('click', event => {
     if (!renderer.xr.isPresenting || !button3d) return;
+
     if (!isPlaced) {
-      placeAtCamera();           // first tap: instant snap
-    } else {
-      tapping = true; tapT = 0; // scale pulse feedback
-      startReacquire();          // subsequent taps: smooth re-acquire
-      info.textContent = 'Repositioning…';
+      placeAtCamera(); // first tap: no button in scene yet, place unconditionally
+      return;
     }
+
+    // Raycast from tap position — only respond if the button is actually hit
+    const rect = renderer.domElement.getBoundingClientRect();
+    _pointer.set(
+      ((event.clientX - rect.left) / rect.width)  *  2 - 1,
+      ((event.clientY - rect.top)  / rect.height) * -2 + 1
+    );
+    // Use the XR sub-camera (first eye) for correct projection in mono phone AR
+    const xrCam = renderer.xr.getCamera();
+    const cam   = (xrCam.cameras && xrCam.cameras.length > 0) ? xrCam.cameras[0] : xrCam;
+    _raycaster.setFromCamera(_pointer, cam);
+
+    if (_raycaster.intersectObject(button3d, true).length === 0) return; // missed
+
+    tapping = true; tapT = 0;
+    startReacquire();
+    info.textContent = 'Repositioning…';
   });
 
   // ── Render loop ────────────────────────────────────────────────────────────
