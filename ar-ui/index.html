@@ -117,7 +117,7 @@
       });
       const label = new THREE.Mesh(geo, mat);
       label.renderOrder = 4;    // above face (3), rim (2), back (1)
-      label.position.y  = 0.010; // 10mm above button origin, clear of face surface
+      label.position.y  = 0.014; // 14mm above button origin — extra clearance to avoid z-fighting
       button3d.add(label);
     })();
 
@@ -173,10 +173,12 @@
   // The glass face is the +Y axis in Three.js space (Blender +Z → GLTF +Y).
   // lookAt aligns -Z toward the target, so we post-multiply a local-X rotation
   // to bring +Y (the face) toward the camera, then back off by FACE_TILT degrees.
-  // R_x(-90° + FACE_TILT) = R_x(-68°) at the current 22° tilt.
+  // R_x(+90° + FACE_TILT) = R_x(+112°) at the current 22° tilt.
+  // Sign is +90° (not -90°) because the face normal in this GLB is inverted
+  // relative to the expected +Y direction — a 180° flip from the theoretical value.
   const _faceCorrection = new THREE.Quaternion().setFromAxisAngle(
     new THREE.Vector3(1, 0, 0),
-    THREE.MathUtils.degToRad(-90 + FACE_TILT)
+    THREE.MathUtils.degToRad(90 + FACE_TILT)
   );
   function setComfortRotation(obj, camPos) {
     obj.lookAt(camPos.x, obj.position.y, camPos.z); // Y-axis billboard base
