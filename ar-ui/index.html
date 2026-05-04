@@ -88,11 +88,13 @@
   let animProgress = 0;
   let tapT        = 0;     // 0 = full size, 1 = fully pressed (TAP_SCALE)
   let tapping     = false; // true during press phase
+  let debugFlash  = 0;     // countdown in seconds — turns button red to confirm tap receipt
 
   // ── Load GLB ───────────────────────────────────────────────────────────────
   let mixer    = null;
   let button3d = null;
   let rimMat   = null;     // reference for per-frame emissive pulse
+  let faceMat  = null;     // reference for per-frame emissive restore after debug flash
 
   new GLTFLoader().load('./button_glass_01.glb', gltf => {
     button3d = gltf.scene;
@@ -107,9 +109,10 @@
         rimMat = child.material; // store for idle emissive pulse
       }
       if (child.material.name === 'glass_face') {
-        child.material.opacity          = 0.65;              // bump from GLB 0.55
-        child.material.emissive         = new THREE.Color(0x334466); // subtle cool tint
-        child.material.emissiveIntensity = 0.12;             // faint glow — contrast against rim
+        faceMat = child.material;
+        child.material.opacity          = 0.65;
+        child.material.emissive         = new THREE.Color(0x334466);
+        child.material.emissiveIntensity = 0.12;
       }
     });
 
@@ -246,6 +249,8 @@
   // ── Tap handler ────────────────────────────────────────────────────────────
   renderer.domElement.addEventListener('click', () => {
     if (!renderer.xr.isPresenting || !button3d) return;
+    console.log('[AR-UI] tap registered');
+    debugFlash = 0.3;
     if (!isPlaced) {
       placeAtCamera();           // first tap: instant snap
     } else {
@@ -315,11 +320,22 @@
       button3d.scale.setScalar(1 - (1 - TAP_SCALE) * tapT);
     }
 
-    // ── Rim idle emissive pulse ─────────────────────────────────────────────
-    if (rimMat) {
-      rimMat.emissiveIntensity = RIM_BASE
-        + RIM_PULSE_AMP   * Math.sin(clock.elapsedTime * Math.PI * 2 * RIM_PULSE_HZ)
-        + RIM_PRESS_BOOST * tapT; // rim flares on press, stacks on idle pulse
+    // ── Emissive: debug flash overrides normal pulse, self-restores ────────────
+    if (debugFlash > 0) {
+      debugFlash = Math.max(0, debugFlash - delta);
+      if (rimMat)  { rimMat.emissive.setRGB(1, 0, 0);  rimMat.emissiveIntensity  = 5.0; }
+      if (faceMat) { faceMat.emissive.setRGB(1, 0, 0); faceMat.emissiveIntensity = 3.0; }
+    } else {
+      if (rimMat) {
+        rimMat.emissive.setHex(0xffffff); // ensure restored after flash
+        rimMat.emissiveIntensity = RIM_BASE
+          + RIM_PULSE_AMP   * Math.sin(clock.elapsedTime * Math.PI * 2 * RIM_PULSE_HZ)
+          + RIM_PRESS_BOOST * tapT;
+      }
+      if (faceMat) {
+        faceMat.emissive.setHex(0x334466); // ensure restored after flash
+        faceMat.emissiveIntensity = 0.12;
+      }
     }
 
     renderer.render(scene, camera);
