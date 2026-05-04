@@ -66,12 +66,13 @@
   const FACE_TILT      = 22;     // degrees — face tilts this far from perfect billboard
 
   // ── Interaction constants ─────────────────────────────────────────────────
-  const TAP_PRESS_DUR   = 0.08;  // seconds to scale down on tap
-  const TAP_RELEASE_DUR = 0.15;  // seconds to return to normal scale
-  const TAP_SCALE       = 0.95;  // scale at peak of press
+  const TAP_PRESS_DUR   = 0.12;  // seconds to scale down on tap
+  const TAP_RELEASE_DUR = 0.18;  // seconds to return to normal scale
+  const TAP_SCALE       = 0.90;  // scale at peak of press
   const RIM_BASE        = 2.8;   // rim emissive base (matches GLB spec)
   const RIM_PULSE_AMP   = 0.30;  // ±amplitude of idle emissive variation
   const RIM_PULSE_HZ    = 0.40;  // Hz — ~2.5s period, desync from float animation
+  const RIM_PRESS_BOOST = 1.5;   // additive emissive boost at full press — stacks on idle pulse
 
   // ── Re-acquisition constants ───────────────────────────────────────────────
   const TRIGGER_DEG    = 28;     // start dwell timer above this angle
@@ -316,9 +317,9 @@
 
     // ── Rim idle emissive pulse ─────────────────────────────────────────────
     if (rimMat) {
-      rimMat.emissiveIntensity = RIM_BASE + RIM_PULSE_AMP * Math.sin(
-        clock.elapsedTime * Math.PI * 2 * RIM_PULSE_HZ
-      );
+      rimMat.emissiveIntensity = RIM_BASE
+        + RIM_PULSE_AMP   * Math.sin(clock.elapsedTime * Math.PI * 2 * RIM_PULSE_HZ)
+        + RIM_PRESS_BOOST * tapT; // rim flares on press, stacks on idle pulse
     }
 
     renderer.render(scene, camera);
