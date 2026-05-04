@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Happy Birthday — AR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: monospace; color: #fff; }
+
+    #info {
+      position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      font-size: 13px; text-align: center; white-space: nowrap;
+      background: rgba(0,0,0,0.55); padding: 6px 16px; border-radius: 20px;
+      pointer-events: none; z-index: 10;
+    }
+
+    #ARButton {
+      position: fixed !important;
+      bottom: 28px !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      z-index: 10 !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Loading…</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three":         "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+  import * as THREE     from 'three';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import { ARButton }   from 'three/addons/webxr/ARButton.js';
+
+  const info  = document.getElementById('info');
+  const clock = new THREE.Clock();
+
+  // ── Renderer ───────────────────────────────────────────────────────────────
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.xr.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  // ── Scene ──────────────────────────────────────────────────────────────────
+  const scene  = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.5));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+
+  // ── Placement constants ────────────────────────────────────────────────────
+  const PLACE_DISTANCE = 0.55;
+  const PLACE_DROP     = 0.10;   // cake sits lower — heavier object than a button
+  const TRIGGER_DEG    = 28;
+  const RESET_DEG      = 20;
+  const OCCLUDE_DEG    = 90;
+  const DWELL_TIME     = 1.1;
+  const ANIM_DURATION  = 0.45;
+
+  // ── "Happy Birthday!" canvas label ────────────────────────────────────────
+  function makeLabel() {
+    const canvas = document.createElement('canvas');
+    canvas.width  = 1024;
+    canvas.height = 160;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle    = 'rgba(255, 220, 80, 0.95)';
+    ctx.font         = 'bold 96px system-ui, sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor  = 'rgba(255, 120, 0, 0.8)';
+    ctx.shadowBlur   = 18;
+    ctx.fillText('Happy Birthday!', 512, 80);
+
+    const geo = new THREE.PlaneGeometry(0.22, 0.034);
+    const mat = new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(canvas),
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 10;
+    return mesh;
+  }
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let cake3d      = null;
+  let mixer       = null;
+  let label       = null;
+  let isPlaced    = false;
+  let isAnimating = false;
+  let dwellTimer  = 0;
+  let animProgress = 0;
+
+  // ── Reusable vectors ───────────────────────────────────────────────────────
+  const _camPos        = new THREE.Vector3();
+  const _forward       = new THREE.Vector3();
+  const _toScene       = new THREE.Vector3();
+  const _animStartPos  = new THREE.Vector3();
+  const _animTargetPos = new THREE.Vector3();
+  const _animStartQuat = new THREE.Quaternion();
+  const _animTargetQuat = new THREE.Quaternion();
+  const _lookProxy     = new THREE.Object3D();
+
+  // ── Load GLB ───────────────────────────────────────────────────────────────
+  new GLTFLoader().load('./birthday_cake_01.glb', gltf => {
+    cake3d = gltf.scene;
+
+    // Play all animation clips (idle_float + 3× flame pulse)
+    if (gltf.animations.length) {
+      mixer = new THREE.AnimationMixer(cake3d);
+      gltf.animations.forEach(clip => {
+        const action = mixer.clipAction(clip);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.play();
+      });
+    }
+
+    // "Happy Birthday!" label — floats 9cm above scene centre
+    label = makeLabel();
+    label.position.set(0, 0.09, 0);
+    cake3d.add(label);
+
+    info.textContent = 'Tap "Start AR" → tap to place';
+  },
+  undefined,
+  err => { info.textContent = 'Load error — see console'; console.error(err); });
+
+  // ── AR button ─────────────────────────────────────────────────────────────
+  document.body.appendChild(
+    ARButton.createButton(renderer, {
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body },
+    })
+  );
+
+  renderer.xr.addEventListener('sessionstart', () => {
+    info.textContent = 'Tap to place';
+  });
+
+  renderer.xr.addEventListener('sessionend', () => {
+    isPlaced = isAnimating = false;
+    dwellTimer = animProgress = 0;
+    if (cake3d && cake3d.parent) scene.remove(cake3d);
+    info.textContent = 'AR session ended';
+  });
+
+  window.addEventListener('pagehide', () => {
+    const session = renderer.xr.getSession();
+    if (session) session.end();
+  });
+
+  // ── Placement helpers ──────────────────────────────────────────────────────
+  function getCameraForward() {
+    renderer.xr.getCamera().getWorldPosition(_camPos);
+    renderer.xr.getCamera().getWorldDirection(_forward);
+    _forward.y = 0;
+    _forward.normalize();
+  }
+
+  function computeComfortTarget() {
+    getCameraForward();
+    _animTargetPos.set(
+      _camPos.x + _forward.x * PLACE_DISTANCE,
+      _camPos.y - PLACE_DROP,
+      _camPos.z + _forward.z * PLACE_DISTANCE
+    );
+    // Cake faces camera on Y-axis billboard (no face-tilt correction needed)
+    _lookProxy.position.copy(_animTargetPos);
+    _lookProxy.lookAt(_camPos.x, _animTargetPos.y, _camPos.z);
+    _animTargetQuat.copy(_lookProxy.quaternion);
+  }
+
+  function placeAtCamera() {
+    if (!cake3d) return;
+    getCameraForward();
+    cake3d.position.set(
+      _camPos.x + _forward.x * PLACE_DISTANCE,
+      _camPos.y - PLACE_DROP,
+      _camPos.z + _forward.z * PLACE_DISTANCE
+    );
+    cake3d.lookAt(_camPos.x, cake3d.position.y, _camPos.z);
+    if (!cake3d.parent) scene.add(cake3d);
+    isPlaced    = true;
+    isAnimating = false;
+    dwellTimer  = 0;
+    info.textContent = 'Placed — tap to reposition';
+  }
+
+  function startReacquire() {
+    computeComfortTarget();
+    _animStartPos.copy(cake3d.position);
+    _animStartQuat.copy(cake3d.quaternion);
+    animProgress = 0;
+    isAnimating  = true;
+    dwellTimer   = 0;
+  }
+
+  // ── Tap handler ────────────────────────────────────────────────────────────
+  renderer.domElement.addEventListener('click', () => {
+    if (!renderer.xr.isPresenting || !cake3d) return;
+    if (!isPlaced) { placeAtCamera(); return; }
+    startReacquire();
+    info.textContent = 'Repositioning…';
+  });
+
+  // ── Render loop ────────────────────────────────────────────────────────────
+  renderer.setAnimationLoop(() => {
+    const delta = clock.getDelta();
+    if (mixer) mixer.update(delta);
+
+    // Label always faces camera
+    if (label && cake3d && cake3d.parent) {
+      renderer.xr.getCamera().getWorldPosition(_camPos);
+      label.lookAt(_camPos);
+    }
+
+    if (isPlaced && renderer.xr.isPresenting) {
+      if (isAnimating) {
+        animProgress += delta / ANIM_DURATION;
+        if (animProgress >= 1) {
+          animProgress = 1;
+          isAnimating  = false;
+          info.textContent = 'Placed — tap to reposition';
+        }
+        const t = 1 - (1 - animProgress) * (1 - animProgress);
+        cake3d.position.lerpVectors(_animStartPos, _animTargetPos, t);
+        cake3d.quaternion.slerpQuaternions(_animStartQuat, _animTargetQuat, t);
+      } else {
+        renderer.xr.getCamera().getWorldPosition(_camPos);
+        renderer.xr.getCamera().getWorldDirection(_forward);
+        _forward.y = 0; _forward.normalize();
+
+        _toScene.copy(cake3d.position).sub(_camPos);
+        _toScene.y = 0;
+        if (_toScene.lengthSq() > 0.0001) _toScene.normalize();
+
+        const dot   = THREE.MathUtils.clamp(_toScene.dot(_forward), -1, 1);
+        const angle = Math.acos(dot) * THREE.MathUtils.RAD2DEG;
+
+        if (angle > OCCLUDE_DEG) {
+          startReacquire();
+          info.textContent = 'Re-acquiring…';
+        } else if (angle > TRIGGER_DEG) {
+          dwellTimer += delta;
+          if (dwellTimer >= DWELL_TIME) {
+            startReacquire();
+            info.textContent = 'Re-acquiring…';
+          }
+        } else if (angle < RESET_DEG) {
+          dwellTimer = 0;
+        }
+      }
+    }
+
+    renderer.render(scene, camera);
+  });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+  </script>
+</body>
+</html>
