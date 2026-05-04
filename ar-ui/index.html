@@ -63,7 +63,7 @@
   // ── Placement constants ────────────────────────────────────────────────────
   const PLACE_DISTANCE = 0.50;   // metres in front of camera
   const PLACE_DROP     = 0.07;   // metres below camera eye-level
-  const FACE_TILT      = 15;     // degrees — face tilts this far from perfect billboard
+  const FACE_TILT      = 22;     // degrees — face tilts this far from perfect billboard
 
   // ── Re-acquisition constants ───────────────────────────────────────────────
   const TRIGGER_DEG    = 28;     // start dwell timer above this angle
@@ -85,13 +85,41 @@
   new GLTFLoader().load('./button_glass_01.glb', gltf => {
     button3d = gltf.scene;
 
-    // Fix transparent draw order
+    // Fix transparent draw order + perceptual contrast tuning
     const ORDER = { glass_back: 1, glass_rim: 2, glass_face: 3 };
     button3d.traverse(child => {
       if (!child.isMesh) return;
       child.material.depthWrite = false;
       child.renderOrder         = ORDER[child.material.name] ?? 2;
+      if (child.material.name === 'glass_face') {
+        child.material.opacity = 0.65; // bump from GLB default 0.55 — face reads more present
+      }
     });
+
+    // Canvas label — "Enter" centered on face
+    (function addLabel() {
+      const canvas = document.createElement('canvas');
+      canvas.width  = 512;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 512, 128);
+      ctx.fillStyle    = 'rgba(255, 255, 255, 0.90)';
+      ctx.font         = '500 64px system-ui, sans-serif';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Enter', 256, 64);
+
+      const geo = new THREE.PlaneGeometry(0.08, 0.02);
+      geo.rotateX(-Math.PI / 2); // lay flat in XZ plane so normal = +Y (matches face)
+      const mat = new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(canvas),
+        transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const label = new THREE.Mesh(geo, mat);
+      label.renderOrder = 4;    // above face (3), rim (2), back (1)
+      label.position.y  = 0.010; // 10mm above button origin, clear of face surface
+      button3d.add(label);
+    })();
 
     // Start idle_float animation
     if (gltf.animations.length) {
@@ -145,7 +173,7 @@
   // The glass face is the +Y axis in Three.js space (Blender +Z → GLTF +Y).
   // lookAt aligns -Z toward the target, so we post-multiply a local-X rotation
   // to bring +Y (the face) toward the camera, then back off by FACE_TILT degrees.
-  // R_x(-90° + FACE_TILT) = R_x(-75°) at the default 15° tilt.
+  // R_x(-90° + FACE_TILT) = R_x(-68°) at the current 22° tilt.
   const _faceCorrection = new THREE.Quaternion().setFromAxisAngle(
     new THREE.Vector3(1, 0, 0),
     THREE.MathUtils.degToRad(-90 + FACE_TILT)
