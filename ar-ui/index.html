@@ -65,6 +65,14 @@
   const PLACE_DROP     = 0.07;   // metres below camera eye-level
   const FACE_TILT      = 22;     // degrees — face tilts this far from perfect billboard
 
+  // ── Interaction constants ─────────────────────────────────────────────────
+  const TAP_PRESS_DUR   = 0.08;  // seconds to scale down on tap
+  const TAP_RELEASE_DUR = 0.15;  // seconds to return to normal scale
+  const TAP_SCALE       = 0.95;  // scale at peak of press
+  const RIM_BASE        = 2.8;   // rim emissive base (matches GLB spec)
+  const RIM_PULSE_AMP   = 0.30;  // ±amplitude of idle emissive variation
+  const RIM_PULSE_HZ    = 0.40;  // Hz — ~2.5s period, desync from float animation
+
   // ── Re-acquisition constants ───────────────────────────────────────────────
   const TRIGGER_DEG    = 28;     // start dwell timer above this angle
   const RESET_DEG      = 20;     // reset dwell timer below this angle (hysteresis)
@@ -77,10 +85,13 @@
   let isAnimating = false;
   let dwellTimer  = 0;
   let animProgress = 0;
+  let tapT        = 0;     // 0 = full size, 1 = fully pressed (TAP_SCALE)
+  let tapping     = false; // true during press phase
 
   // ── Load GLB ───────────────────────────────────────────────────────────────
   let mixer    = null;
   let button3d = null;
+  let rimMat   = null;     // reference for per-frame emissive pulse
 
   new GLTFLoader().load('./button_glass_01.glb', gltf => {
     button3d = gltf.scene;
@@ -91,8 +102,13 @@
       if (!child.isMesh) return;
       child.material.depthWrite = false;
       child.renderOrder         = ORDER[child.material.name] ?? 2;
+      if (child.material.name === 'glass_rim') {
+        rimMat = child.material; // store for idle emissive pulse
+      }
       if (child.material.name === 'glass_face') {
-        child.material.opacity = 0.65; // bump from GLB default 0.55 — face reads more present
+        child.material.opacity          = 0.65;              // bump from GLB 0.55
+        child.material.emissive         = new THREE.Color(0x334466); // subtle cool tint
+        child.material.emissiveIntensity = 0.12;             // faint glow — contrast against rim
       }
     });
 
@@ -149,6 +165,8 @@
     isPlaced = false;
     isAnimating = false;
     dwellTimer = 0;
+    tapping = false; tapT = 0;
+    if (button3d) button3d.scale.setScalar(1);
     info.textContent = 'AR session ended';
   });
 
@@ -230,6 +248,7 @@
     if (!isPlaced) {
       placeAtCamera();           // first tap: instant snap
     } else {
+      tapping = true; tapT = 0; // scale pulse feedback
       startReacquire();          // subsequent taps: smooth re-acquire
       info.textContent = 'Repositioning…';
     }
@@ -282,6 +301,24 @@
         }
         // Between RESET_DEG and TRIGGER_DEG: hold timer without change
       }
+    }
+
+    // ── Tap scale feedback ──────────────────────────────────────────────────
+    if (button3d && isPlaced) {
+      if (tapping) {
+        tapT = Math.min(tapT + delta / TAP_PRESS_DUR, 1);
+        if (tapT >= 1) tapping = false;
+      } else if (tapT > 0) {
+        tapT = Math.max(tapT - delta / TAP_RELEASE_DUR, 0);
+      }
+      button3d.scale.setScalar(1 - (1 - TAP_SCALE) * tapT);
+    }
+
+    // ── Rim idle emissive pulse ─────────────────────────────────────────────
+    if (rimMat) {
+      rimMat.emissiveIntensity = RIM_BASE + RIM_PULSE_AMP * Math.sin(
+        clock.elapsedTime * Math.PI * 2 * RIM_PULSE_HZ
+      );
     }
 
     renderer.render(scene, camera);
