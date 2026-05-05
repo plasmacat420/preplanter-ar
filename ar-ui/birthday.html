@@ -40,6 +40,9 @@
   import * as THREE     from 'three';
   import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   import { ARButton }   from 'three/addons/webxr/ARButton.js';
+  import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
   const info  = document.getElementById('info');
   const clock = new THREE.Clock();
@@ -48,6 +51,8 @@
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(devicePixelRatio);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
   renderer.xr.enabled = true;
   document.body.appendChild(renderer.domElement);
 
@@ -57,6 +62,17 @@
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.5));
   scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+
+  // ── Bloom composer (desktop preview only — disabled in XR) ────────────────
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(innerWidth, innerHeight),
+    0.9,   // strength
+    0.5,   // radius
+    0.55   // threshold — only bright emissives bloom
+  );
+  composer.addPass(bloomPass);
 
   // ── Placement constants ────────────────────────────────────────────────────
   const PLACE_DISTANCE = 0.55;
@@ -115,7 +131,7 @@
   new GLTFLoader().load('./birthday_cake_01.glb', gltf => {
     cake3d = gltf.scene;
 
-    // Play all animation clips (idle_float + 3× flame pulse)
+    // Play all animation clips if any
     if (gltf.animations.length) {
       mixer = new THREE.AnimationMixer(cake3d);
       gltf.animations.forEach(clip => {
@@ -124,6 +140,26 @@
         action.play();
       });
     }
+
+    // ── Candle glow lights (attached to cake, move with it) ──────────────
+    // Candle cluster is at Y≈0.14 in Three.js (Blender Z=0.14)
+    // X positions: [-0.026, 0, 0.026]
+    const CANDLE_Y = 0.14;
+    const candlePosXZ = [[-0.026, 0], [0, 0], [0.026, 0]];
+    candlePosXZ.forEach(([cx, cz]) => {
+      const pl = new THREE.PointLight(0xff7010, 1.0, 0.35, 2.0);
+      pl.position.set(cx, CANDLE_Y, cz);
+      pl.userData.isCandle = true;
+      pl.userData.baseIntensity = 1.0;
+      cake3d.add(pl);
+    });
+
+    // Wide warm pool light above all candles — floods tier tops with orange
+    const poolLight = new THREE.PointLight(0xff8820, 0.6, 0.5, 1.8);
+    poolLight.position.set(0, CANDLE_Y + 0.02, 0);
+    poolLight.userData.isCandle = true;
+    poolLight.userData.baseIntensity = 0.6;
+    cake3d.add(poolLight);
 
     // "Happy Birthday!" label — floats 9cm above scene centre
     label = makeLabel();
@@ -214,13 +250,32 @@
   });
 
   // ── Render loop ────────────────────────────────────────────────────────────
+  let flickerT = 0;
   renderer.setAnimationLoop(() => {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
 
+    // Candle flicker — subtle intensity oscillation on candle lights
+    if (cake3d) {
+      flickerT += delta * 8.5;
+      const flicker = 0.88 + 0.12 * Math.sin(flickerT)
+                           + 0.06 * Math.sin(flickerT * 2.3 + 1.1);
+      cake3d.traverse(obj => {
+        if (obj.isLight && obj.userData.isCandle) {
+          obj.intensity = obj.userData.baseIntensity
+            ? obj.userData.baseIntensity * flicker
+            : flicker;
+        }
+      });
+    }
+
     // Label always faces camera
     if (label && cake3d && cake3d.parent) {
-      renderer.xr.getCamera().getWorldPosition(_camPos);
+      if (renderer.xr.isPresenting) {
+        renderer.xr.getCamera().getWorldPosition(_camPos);
+      } else {
+        camera.getWorldPosition(_camPos);
+      }
       label.lookAt(_camPos);
     }
 
@@ -262,13 +317,20 @@
       }
     }
 
-    renderer.render(scene, camera);
+    // Use bloom composer on desktop; fall back to direct render in XR
+    // (EffectComposer doesn't work with WebXR framebuffers)
+    if (renderer.xr.isPresenting) {
+      renderer.render(scene, camera);
+    } else {
+      composer.render();
+    }
   });
 
   window.addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    composer.setSize(innerWidth, innerHeight);
   });
   </script>
 </body>
