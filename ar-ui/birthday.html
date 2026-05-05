@@ -60,8 +60,12 @@
   const scene  = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.5));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+  // Dark atmospheric base — candle lights carry the scene, not ambient
+  scene.add(new THREE.AmbientLight(0x221510, 0.08));   // near-black warm tint
+  // Warm key from upper-left — shape definition only, not fill
+  const sceneKey = new THREE.DirectionalLight(0xffe8c8, 0.35);
+  sceneKey.position.set(-1, 1.5, 0.8);
+  scene.add(sceneKey);
 
   // ── Bloom composer (desktop preview only — disabled in XR) ────────────────
   const composer = new EffectComposer(renderer);
@@ -147,18 +151,18 @@
     const CANDLE_Y = 0.14;
     const candlePosXZ = [[-0.026, 0], [0, 0], [0.026, 0]];
     candlePosXZ.forEach(([cx, cz]) => {
-      const pl = new THREE.PointLight(0xff7010, 1.0, 0.35, 2.0);
+      const pl = new THREE.PointLight(0xff6500, 2.5, 0.40, 2.0);
       pl.position.set(cx, CANDLE_Y, cz);
       pl.userData.isCandle = true;
-      pl.userData.baseIntensity = 1.0;
+      pl.userData.baseIntensity = 2.5;
       cake3d.add(pl);
     });
 
-    // Wide warm pool light above all candles — floods tier tops with orange
-    const poolLight = new THREE.PointLight(0xff8820, 0.6, 0.5, 1.8);
-    poolLight.position.set(0, CANDLE_Y + 0.02, 0);
+    // Wide warm pool light — floods tier tops with orange glow
+    const poolLight = new THREE.PointLight(0xff9030, 1.8, 0.60, 1.6);
+    poolLight.position.set(0, CANDLE_Y + 0.03, 0);
     poolLight.userData.isCandle = true;
-    poolLight.userData.baseIntensity = 0.6;
+    poolLight.userData.baseIntensity = 1.8;
     cake3d.add(poolLight);
 
     // "Happy Birthday!" label — floats 9cm above scene centre
